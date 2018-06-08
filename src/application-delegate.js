@@ -179,10 +179,10 @@ class ApplicationDelegate {
     return remote.systemPreferences.getUserDefault(key, type)
   }
 
-  async setUserSettings (config) {
+  async setUserSettings (config, configFilePath) {
     this.pendingSettingsUpdateCount++
     try {
-      await ipcHelpers.call('set-user-settings', config)
+      await ipcHelpers.call('set-user-settings', JSON.stringify(config), configFilePath)
     } finally {
       this.pendingSettingsUpdateCount--
     }
@@ -236,7 +236,7 @@ class ApplicationDelegate {
         return chosen
       } else {
         const callback = buttons[buttonLabels[chosen]]
-        if (typeof callback === 'function') callback()
+        if (typeof callback === 'function') return callback()
       }
     }
   }

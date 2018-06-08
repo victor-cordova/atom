@@ -458,15 +458,18 @@ class TextEditorComponent {
     let clientContainerWidth = '100%'
     if (this.hasInitialMeasurements) {
       if (model.getAutoHeight()) {
-        clientContainerHeight = this.getContentHeight()
-        if (this.canScrollHorizontally()) clientContainerHeight += this.getHorizontalScrollbarHeight()
-        clientContainerHeight += 'px'
+        clientContainerHeight =
+          this.getContentHeight() +
+          this.getHorizontalScrollbarHeight() +
+          'px'
       }
       if (model.getAutoWidth()) {
         style.width = 'min-content'
-        clientContainerWidth = this.getGutterContainerWidth() + this.getContentWidth()
-        if (this.canScrollVertically()) clientContainerWidth += this.getVerticalScrollbarWidth()
-        clientContainerWidth += 'px'
+        clientContainerWidth =
+          this.getGutterContainerWidth() +
+          this.getContentWidth() +
+          this.getVerticalScrollbarWidth() +
+          'px'
       } else {
         style.width = this.element.style.width
       }
@@ -477,7 +480,7 @@ class TextEditorComponent {
       attributes.mini = ''
     }
 
-    if (!this.isInputEnabled()) {
+    if (model.isReadOnly()) {
       attributes.readonly = ''
     }
 
@@ -751,20 +754,14 @@ class TextEditorComponent {
         scrollLeft = this.getScrollLeft()
         canScrollHorizontally = this.canScrollHorizontally()
         canScrollVertically = this.canScrollVertically()
-        horizontalScrollbarHeight =
-          canScrollHorizontally
-          ? this.getHorizontalScrollbarHeight()
-          : 0
-        verticalScrollbarWidth =
-          canScrollVertically
-          ? this.getVerticalScrollbarWidth()
-          : 0
+        horizontalScrollbarHeight = this.getHorizontalScrollbarHeight()
+        verticalScrollbarWidth = this.getVerticalScrollbarWidth()
         forceScrollbarVisible = this.remeasureScrollbars
       } else {
         forceScrollbarVisible = true
       }
 
-      const dummyScrollbarVnodes = [
+      return [
         $(DummyScrollbarComponent, {
           ref: 'verticalScrollbar',
           orientation: 'vertical',
@@ -786,13 +783,10 @@ class TextEditorComponent {
           scrollLeft,
           verticalScrollbarWidth,
           forceScrollbarVisible
-        })
-      ]
+        }),
 
-      // If both scrollbars are visible, push a dummy element to force a "corner"
-      // to render where the two scrollbars meet at the lower right
-      if (verticalScrollbarWidth > 0 && horizontalScrollbarHeight > 0) {
-        dummyScrollbarVnodes.push($.div(
+        // Force a "corner" to render where the two scrollbars meet at the lower right
+        $.div(
           {
             ref: 'scrollbarCorner',
             className: 'scrollbar-corner',
@@ -805,10 +799,8 @@ class TextEditorComponent {
               overflow: 'scroll'
             }
           }
-        ))
-      }
-
-      return dummyScrollbarVnodes
+        )
+      ]
     } else {
       return null
     }
@@ -1531,15 +1523,11 @@ class TextEditorComponent {
     let {wheelDeltaX, wheelDeltaY} = event
 
     if (Math.abs(wheelDeltaX) > Math.abs(wheelDeltaY)) {
-      wheelDeltaX = (Math.sign(wheelDeltaX) === 1)
-        ? Math.max(1, wheelDeltaX * scrollSensitivity)
-        : Math.min(-1, wheelDeltaX * scrollSensitivity)
+      wheelDeltaX = wheelDeltaX * scrollSensitivity
       wheelDeltaY = 0
     } else {
       wheelDeltaX = 0
-      wheelDeltaY = (Math.sign(wheelDeltaY) === 1)
-        ? Math.max(1, wheelDeltaY * scrollSensitivity)
-        : Math.min(-1, wheelDeltaY * scrollSensitivity)
+      wheelDeltaY = wheelDeltaY * scrollSensitivity
     }
 
     if (this.getPlatform() !== 'darwin' && event.shiftKey) {
@@ -2630,37 +2618,25 @@ class TextEditorComponent {
 
   getScrollContainerHeight () {
     if (this.props.model.getAutoHeight()) {
-      return this.getScrollHeight()
+      return this.getScrollHeight() + this.getHorizontalScrollbarHeight()
     } else {
       return this.getClientContainerHeight()
     }
   }
 
   getScrollContainerClientWidth () {
-    if (this.canScrollVertically()) {
-      return this.getScrollContainerWidth() - this.getVerticalScrollbarWidth()
-    } else {
-      return this.getScrollContainerWidth()
-    }
+    return this.getScrollContainerWidth() - this.getVerticalScrollbarWidth()
   }
 
   getScrollContainerClientHeight () {
-    if (this.canScrollHorizontally()) {
-      return this.getScrollContainerHeight() - this.getHorizontalScrollbarHeight()
-    } else {
-      return this.getScrollContainerHeight()
-    }
+    return this.getScrollContainerHeight() - this.getHorizontalScrollbarHeight()
   }
 
   canScrollVertically () {
     const {model} = this.props
     if (model.isMini()) return false
     if (model.getAutoHeight()) return false
-    if (this.getContentHeight() > this.getScrollContainerHeight()) return true
-    return (
-      this.getContentWidth() > this.getScrollContainerWidth() &&
-      this.getContentHeight() > (this.getScrollContainerHeight() - this.getHorizontalScrollbarHeight())
-    )
+    return this.getContentHeight() > this.getScrollContainerClientHeight()
   }
 
   canScrollHorizontally () {
@@ -2668,11 +2644,7 @@ class TextEditorComponent {
     if (model.isMini()) return false
     if (model.getAutoWidth()) return false
     if (model.isSoftWrapped()) return false
-    if (this.getContentWidth() > this.getScrollContainerWidth()) return true
-    return (
-      this.getContentHeight() > this.getScrollContainerHeight() &&
-      this.getContentWidth() > (this.getScrollContainerWidth() - this.getVerticalScrollbarWidth())
-    )
+    return this.getContentWidth() > this.getScrollContainerClientWidth()
   }
 
   getScrollHeight () {
@@ -2815,7 +2787,7 @@ class TextEditorComponent {
   setScrollTop (scrollTop) {
     if (Number.isNaN(scrollTop) || scrollTop == null) return false
 
-    scrollTop = Math.round(Math.max(0, Math.min(this.getMaxScrollTop(), scrollTop)))
+    scrollTop = roundToPhysicalPixelBoundary(Math.max(0, Math.min(this.getMaxScrollTop(), scrollTop)))
     if (scrollTop !== this.scrollTop) {
       this.derivedDimensionsCache = {}
       this.scrollTopPending = true
@@ -2846,7 +2818,7 @@ class TextEditorComponent {
   setScrollLeft (scrollLeft) {
     if (Number.isNaN(scrollLeft) || scrollLeft == null) return false
 
-    scrollLeft = Math.round(Math.max(0, Math.min(this.getMaxScrollLeft(), scrollLeft)))
+    scrollLeft = roundToPhysicalPixelBoundary(Math.max(0, Math.min(this.getMaxScrollLeft(), scrollLeft)))
     if (scrollLeft !== this.scrollLeft) {
       this.scrollLeftPending = true
       this.scrollLeft = scrollLeft
@@ -2969,11 +2941,11 @@ class TextEditorComponent {
   }
 
   setInputEnabled (inputEnabled) {
-    this.props.model.update({readOnly: !inputEnabled})
+    this.props.model.update({keyboardInputEnabled: inputEnabled})
   }
 
-  isInputEnabled (inputEnabled) {
-    return !this.props.model.isReadOnly()
+  isInputEnabled () {
+    return !this.props.model.isReadOnly() && this.props.model.isKeyboardInputEnabled()
   }
 
   getHiddenInput () {
@@ -3526,7 +3498,7 @@ class CursorsAndInputComponent {
 
       const cursorStyle = {
         height: cursorHeight,
-        width: pixelWidth + 'px',
+        width: Math.min(pixelWidth, scrollWidth - pixelLeft) + 'px',
         transform: `translate(${pixelLeft}px, ${pixelTop}px)`
       }
       if (extraCursorStyle) Object.assign(cursorStyle, extraCursorStyle)

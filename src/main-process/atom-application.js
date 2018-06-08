@@ -33,7 +33,7 @@ class AtomApplication extends EventEmitter {
   // Public: The entry point into the Atom application.
   static open (options) {
     if (!options.socketPath) {
-      const username = process.platform === 'win32' ? process.env.USERNAME : process.env.USER
+      const {username} = os.userInfo()
 
       // Lowercasing the ATOM_HOME to make sure that we don't get multiple sockets
       // on case-insensitive filesystems due to arbitrary case differences in paths.
@@ -44,7 +44,7 @@ class AtomApplication extends EventEmitter {
         .update('|')
         .update(process.arch)
         .update('|')
-        .update(username)
+        .update(username || '')
         .update('|')
         .update(atomHomeUnique)
 
@@ -93,7 +93,6 @@ class AtomApplication extends EventEmitter {
     this.quitting = false
     this.getAllWindows = this.getAllWindows.bind(this)
     this.getLastFocusedWindow = this.getLastFocusedWindow.bind(this)
-
     this.resourcePath = options.resourcePath
     this.devResourcePath = options.devResourcePath
     this.version = options.version
@@ -114,9 +113,13 @@ class AtomApplication extends EventEmitter {
       ? path.join(process.env.ATOM_HOME, 'config.json')
       : path.join(process.env.ATOM_HOME, 'config.cson')
 
-    this.configFile = new ConfigFile(configFilePath)
+    this.configFile = ConfigFile.at(configFilePath)
     this.config = new Config({
-      saveCallback: settings => this.configFile.update(settings)
+      saveCallback: settings => {
+        if (!this.quitting) {
+          return this.configFile.update(settings)
+        }
+      }
     })
     this.config.setSchema(null, {type: 'object', properties: _.clone(ConfigSchema)})
 
@@ -136,7 +139,7 @@ class AtomApplication extends EventEmitter {
   // for testing purposes without booting up the world. As you add tests, feel free to move instantiation
   // of these various sub-objects into the constructor, but you'll need to remove the side-effects they
   // perform during their construction, adding an initialize method that you call here.
-  initialize (options) {
+  async initialize (options) {
     global.atomApplication = this
 
     // DEPRECATED: This can be removed at some point (added in 1.13)
@@ -146,14 +149,15 @@ class AtomApplication extends EventEmitter {
       this.config.set('core.titleBar', 'custom')
     }
 
-    process.nextTick(() => this.autoUpdateManager.initialize())
     this.applicationMenu = new ApplicationMenu(this.version, this.autoUpdateManager)
     this.atomProtocolHandler = new AtomProtocolHandler(this.resourcePath, this.safeMode)
 
     this.listenForArgumentsFromNewProcess()
     this.setupDockMenu()
 
-    return this.launch(options)
+    const result = await this.launch(options)
+    this.autoUpdateManager.initialize()
+    return result
   }
 
   async destroy () {
@@ -169,7 +173,8 @@ class AtomApplication extends EventEmitter {
     if (!this.configFilePromise) {
       this.configFilePromise = this.configFile.watch()
       this.disposable.add(await this.configFilePromise)
-      this.config.onDidChange('core.titleBar', this.promptForRestart.bind(this))
+      this.config.onDidChange('core.titleBar', () => this.promptForRestart())
+      this.config.onDidChange('core.colorProfile', () => this.promptForRestart())
     }
 
     const optionsForWindowsToOpen = []
@@ -434,7 +439,11 @@ class AtomApplication extends EventEmitter {
         event.preventDefault()
         const windowUnloadPromises = this.getAllWindows().map(window => window.prepareToUnload())
         const windowUnloadedResults = await Promise.all(windowUnloadPromises)
-        if (windowUnloadedResults.every(Boolean)) app.quit()
+        if (windowUnloadedResults.every(Boolean)) {
+          app.quit()
+        } else {
+          this.quitting = false
+        }
       }
 
       resolveBeforeQuitPromise()
@@ -558,9 +567,11 @@ class AtomApplication extends EventEmitter {
       window.setPosition(x, y)
     }))
 
-    this.disposable.add(ipcHelpers.respondTo('set-user-settings', (window, settings) =>
-      this.configFile.update(settings)
-    ))
+    this.disposable.add(ipcHelpers.respondTo('set-user-settings', (window, settings, filePath) => {
+      if (!this.quitting) {
+        ConfigFile.at(filePath || this.configFilePath).update(JSON.parse(settings))
+      }
+    }))
 
     this.disposable.add(ipcHelpers.respondTo('center-window', window => window.center()))
     this.disposable.add(ipcHelpers.respondTo('focus-window', window => window.focus()))
@@ -876,6 +887,7 @@ class AtomApplication extends EventEmitter {
       }
       if (!resourcePath) resourcePath = this.resourcePath
       if (!windowDimensions) windowDimensions = this.getDimensionsForNewWindow()
+
       openedWindow = new AtomWindow(this, this.fileRecoveryService, {
         initialPaths,
         locationsToOpen,

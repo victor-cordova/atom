@@ -65,10 +65,14 @@ repeat these steps to upgrade to future releases.
 
 ## Building
 
-* [FreeBSD](./docs/build-instructions/freebsd.md)
 * [Linux](https://flight-manual.atom.io/hacking-atom/sections/hacking-on-atom-core/#platform-linux)
 * [macOS](https://flight-manual.atom.io/hacking-atom/sections/hacking-on-atom-core/#platform-mac)
 * [Windows](https://flight-manual.atom.io/hacking-atom/sections/hacking-on-atom-core/#platform-windows)
+
+## Discussion
+
+* Discuss Atom on our [forums](https://discuss.atom.io/)
+* Chat about Atom on our Slack team -- [instructions for joining](https://discuss.atom.io/t/join-us-on-slack/16638?source_topic_id=25406)
 
 ## License
 

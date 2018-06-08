@@ -10,7 +10,6 @@ const Token = require('./token')
 const fs = require('fs-plus')
 const {Point, Range} = require('text-buffer')
 
-const GRAMMAR_TYPE_BONUS = 1000
 const PATH_SPLIT_REGEX = new RegExp('[/.]')
 
 // Extended: This class holds the grammars used for tokenizing.
@@ -38,6 +37,14 @@ class GrammarRegistry {
     const grammarAddedOrUpdated = this.grammarAddedOrUpdated.bind(this)
     this.textmateRegistry.onDidAddGrammar(grammarAddedOrUpdated)
     this.textmateRegistry.onDidUpdateGrammar(grammarAddedOrUpdated)
+
+    this.subscriptions.add(this.config.onDidChange('core.useTreeSitterParsers', () => {
+      this.grammarScoresByBuffer.forEach((score, buffer) => {
+        if (!this.languageOverridesByBufferId.has(buffer.id)) {
+          this.autoAssignLanguageMode(buffer)
+        }
+      })
+    }))
   }
 
   serialize () {
@@ -205,12 +212,21 @@ class GrammarRegistry {
     if (score > 0 && !grammar.bundledPackage) {
       score += 0.125
     }
-    if (this.grammarMatchesContents(grammar, contents)) {
-      score += 0.25
-    }
 
-    if (score > 0 && this.isGrammarPreferredType(grammar)) {
-      score += GRAMMAR_TYPE_BONUS
+    if (grammar instanceof TreeSitterGrammar) {
+      if (!this.config.get('core.useTreeSitterParsers')) return -Infinity
+
+      if (grammar.contentRegExp) {
+        if (grammar.contentRegExp.test(contents)) {
+          score += 0.25
+        } else {
+          score -= 0.25
+        }
+      }
+
+      if (score > 0) score += 0.5
+    } else if (this.grammarMatchesPrefix(grammar, contents)) {
+      score += 0.25
     }
 
     return score
@@ -248,12 +264,8 @@ class GrammarRegistry {
     return pathScore
   }
 
-  grammarMatchesContents (grammar, contents) {
-    if (contents == null) return false
-
-    if (grammar.contentRegExp) { // TreeSitter grammars
-      return grammar.contentRegExp.test(contents)
-    } else if (grammar.firstLineRegex) { // FirstMate grammars
+  grammarMatchesPrefix (grammar, contents) {
+    if (contents && grammar.firstLineRegex) {
       let escaped = false
       let numberOfNewlinesInRegex = 0
       for (let character of grammar.firstLineRegex.source) {
@@ -399,7 +411,7 @@ class GrammarRegistry {
     if (grammar instanceof TreeSitterGrammar) {
       this.treeSitterGrammarsById[grammar.id] = grammar
       if (grammar.legacyScopeName) {
-        this.config.addLegacyScopeAlias(grammar.id, grammar.legacyScopeName)
+        this.config.setLegacyScopeAliasForNewScope(grammar.id, grammar.legacyScopeName)
         this.textMateScopeNamesByTreeSitterLanguageId.set(grammar.id, grammar.legacyScopeName)
         this.treeSitterLanguageIdsByTextMateScopeName.set(grammar.legacyScopeName, grammar.id)
       }
@@ -414,7 +426,7 @@ class GrammarRegistry {
     if (grammar instanceof TreeSitterGrammar) {
       delete this.treeSitterGrammarsById[grammar.id]
       if (grammar.legacyScopeName) {
-        this.config.removeLegacyScopeAlias(grammar.id)
+        this.config.removeLegacyScopeAliasForNewScope(grammar.id)
         this.textMateScopeNamesByTreeSitterLanguageId.delete(grammar.id)
         this.treeSitterLanguageIdsByTextMateScopeName.delete(grammar.legacyScopeName)
       }
@@ -501,12 +513,6 @@ class GrammarRegistry {
 
   scopeForId (id) {
     return this.textmateRegistry.scopeForId(id)
-  }
-
-  isGrammarPreferredType (grammar) {
-    return this.config.get('core.useTreeSitterParsers')
-      ? grammar instanceof TreeSitterGrammar
-      : grammar instanceof FirstMate.Grammar
   }
 
   normalizeLanguageId (languageId) {
