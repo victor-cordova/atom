@@ -219,6 +219,10 @@ Tooltip.prototype.show = function () {
     if (this.hideOnClickOutsideOfTooltip) {
       window.addEventListener('click', this.hideOnClickOutsideOfTooltip, true)
     }
+    window.addEventListener('keypress', e => {
+      this.hide()
+      e.stopPropagation();
+    })
 
     var tip = this.getTooltipElement()
     this.startObservingMutations()
